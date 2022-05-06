@@ -462,7 +462,7 @@ def flat_accuracy(preds, labels):
     return np.sum(pred_flat == labels_flat) / len(labels_flat)
 
 
-model_record_dir = './S_trained_analysis_0117/ckpt{}/'.format(args.ckpt)
+model_record_dir = './S_trained_analysis_mask/ckpt{}/'.format(args.ckpt)
 if not os.path.exists(model_record_dir):
     os.makedirs(model_record_dir)
 #recognized_valid_acc =[]
