@@ -15,7 +15,6 @@ import datetime
 #SET PARAMETERS
 import argparse
 import os
-from torch.autograd import Variable
 
 from transformers import BertForSequenceClassification, BertTokenizer # BERT
 from transformers import AlbertForSequenceClassification, AlbertTokenizer # ALBERT
@@ -39,13 +38,11 @@ parser.add_argument('--optim', type=str, default='adamw')
 
 parser.add_argument('--w1', type=float, default='0.55')
 parser.add_argument('--w2', type=float, default='0.45')
-parser.add_argument('--drop', type=float, default='0.3')
 
 parser.add_argument('--data_dir', default='./dataset/snips_audio/', type=str, help='dataset dir')
 parser.add_argument('--dataset_name', default='salli', type=str, help='dataset name')
 parser.add_argument('--dataset_name2', default='Audio-Snips', type=str, help='dataset name')
 parser.add_argument('--resume', default='None', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
-parser.add_argument('--alpha', default=1., type=float, help='mixup interpolation coefficient (default: 1)')
 
 parser.add_argument('--pretrained_model', default='bert', type=str, help='pretrained_model')
 
@@ -56,8 +53,6 @@ MAX_LEN = 64
 import itertools
 import numpy as np
 import matplotlib.pyplot as plt
-import copy
-
 
 def plot_confusion_matrix(cm, classes, normalize=True, title='Confusion matrix', cmap=plt.cm.Blues):
     if normalize:
@@ -82,6 +77,7 @@ def plot_confusion_matrix(cm, classes, normalize=True, title='Confusion matrix',
     plt.tight_layout()
     plt.ylabel('Source Label')
     plt.xlabel('Predicted Label')
+    #plt.show()
 
 
 if args.seed is not None:
@@ -98,53 +94,6 @@ if args.seed is not None:
         'which can slow down your training considerably! '
         'You may see unexpected behavior when restarting '
         'from checkpoints.')
-
-
-def mixup_data(x, y, alpha=1.0, use_cuda=True):
-    '''Returns mixed inputs, pairs of targets, and lambda'''
-    if alpha > 0:
-        lam = np.random.beta(alpha, alpha)
-    else:
-        lam = 1
-
-    batch_size = x.size()[0]
-    if use_cuda:
-        index = torch.randperm(batch_size).cuda()
-    else:
-        index = torch.randperm(batch_size)
-
-    mask_start_point = list()
-    for i in range(len(x)):
-        zero_equal = x[i]==0
-        
-        for j in range(len(zero_equal)):
-            
-            res = zero_equal[j]
-            
-            if res == True:
-                mask_start_point.append(j)
-                break               
-    
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-    
-    return_x = copy.deepcopy(x)
-    
-    for i in range(len(x)):
-        range_val = mask_start_point[i]
-        
-        for_copy = mixed_x[i]
-        for j in range(range_val):
-            if j == 0:
-                pass
-            if j == range_val-1:
-                break
-            return_x[i][j] = int(for_copy[j])
-
-    y_a, y_b = y, y[index]
-    return return_x, y_a, y_b, lam
-
-def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 def preprocess_data(tokenizer, dataset, mode, name):
     
@@ -219,124 +168,8 @@ def preprocess_data(tokenizer, dataset, mode, name):
                                 
         output_labels.append(label_map[intent_labels[i]])
 
-    
-    if args.pretrained_model != 'roberta':
-        input_tensor_labelled = torch.stack(labelled_inputs, dim=0)    
-        seg_tensor_labelled = torch.stack(labelled_segs, dim=0)
-        mask_tensor_labelled = ~ (input_tensor_labelled == 0)
-        output_tensor_labelled = torch.cat([input_tensor_labelled, seg_tensor_labelled, mask_tensor_labelled], dim=1)
-        
-        input_tensor_recognized = torch.stack(recognized_inputs, dim=0)    
-        seg_tensor_recognized = torch.stack(recognized_segs, dim=0)
-        mask_tensor_recognized = ~ (input_tensor_recognized == 0)
-        output_tensor_recognized = torch.cat([input_tensor_recognized, seg_tensor_recognized, mask_tensor_recognized], dim=1)
-    else:
-        input_tensor_labelled = torch.stack(labelled_inputs, dim=0)
-        mask_tensor_labelled = ~ (input_tensor_labelled == 0)
-        output_tensor_labelled = torch.cat([input_tensor_labelled, mask_tensor_labelled], dim=1)
-        
-        input_tensor_recognized = torch.stack(recognized_inputs, dim=0)
-        mask_tensor_recognized = ~ (input_tensor_recognized == 0)
-        output_tensor_recognized = torch.cat([input_tensor_recognized, mask_tensor_recognized], dim=1)
-    
-    
-    return output_tensor_labelled, output_tensor_recognized, torch.tensor(output_labels), label_list, labelled_sentences, recognized_sentences
 
-def preprocess_data_mask(tokenizer, dataset, mode, name):
     
-    labelled_sentences = list()
-    recognized_sentences = list()
-    intent_labels = list()
-    
-    if name == 'all':
-        
-        labelled_sentence = list()
-        recognized_sentence = list()
-        label = list()
-        for i in range(len(dataset)):
-            _, file_names = os.path.split(dataset[i])
-            name, _ = file_names.split('_')
-            data = pd.read_csv(dataset[i]).dropna()
-            
-            labelled_sentence_tmp = data['{}_sentence'.format(mode)]
-            recognized_sentence_tmp = data['{}_sentence'.format(name)]
-            label_tmp = data['{}_label'.format(mode)]
-            
-            labelled_sentence.extend(labelled_sentence_tmp)
-            recognized_sentence.extend(recognized_sentence_tmp)
-            label.extend(label_tmp)
-    
-    elif name is not None:
-        data = pd.read_csv(dataset).dropna()
-        
-        labelled_sentence = data['{}_sentence'.format(mode)]
-        recognized_sentence = data['{}_sentence'.format(name)]
-        label = data['{}_label'.format(mode)]
-                    
-    else:
-        data = pd.read_csv(dataset).dropna()
-        labelled_sentence = data['label_sentence'].values.tolist()        
-        recognized_sentence = data['stt_sentence'].values.tolist()
-        label = data['label'].values.tolist()
-        
-    for i in range(len(labelled_sentence)):        
-        labelled_sen_tmp = labelled_sentence[i].lower()
-        labelled_sentences.append(labelled_sen_tmp)
-        
-        recognized_sen_tmp = recognized_sentence[i].lower()
-        recognized_sentences.append(recognized_sen_tmp)
-        
-        intent_labels.append(label[i])
-    
-    label_list = list(set(intent_labels))
-    label_list.sort()
-    label_map = {label: i for i, label in enumerate(label_list)}
-    print(label_map)
-    print(len(label_map))
-    print(len(labelled_sentences), len(recognized_sentences), len(intent_labels))
-    
-    labelled_inputs = []
-    labelled_segs = []
-    
-    recognized_inputs = []
-    recognized_segs = []
-    
-    output_labels = []
-    for i in range(len(labelled_sentences)):
-        
-        input_sentence_labelled = labelled_sentences[i]
-        input_sentence_recognized = recognized_sentences[i]
-        
-        word_cut_labelled = input_sentence_labelled.split(' ')
-        word_cut_recognized = input_sentence_recognized.split(' ')
-        
-        output_sentence_labelled = ''
-        output_sentence_recognized = ''
-        
-        for word in word_cut_labelled:
-            prob = random.random()
-            if prob <= args.drop:
-                word = '[MASK]'
-            output_sentence_labelled += word+' '
-        
-        for word in word_cut_recognized:
-            prob = random.random()
-            if prob <= args.drop:
-                word = '[MASK]'
-            output_sentence_recognized += word+' '
-                
-        
-        input_dict_labelled = tokenizer(output_sentence_labelled.rstrip(), padding = 'max_length', truncation = True, max_length = MAX_LEN, return_tensors = 'pt', return_attention_mask = False)
-        input_dict_recognized = tokenizer(output_sentence_recognized.rstrip(), padding = 'max_length', truncation = True, max_length = MAX_LEN, return_tensors = 'pt', return_attention_mask = False)
-        labelled_inputs.append(input_dict_labelled['input_ids'])
-        recognized_inputs.append(input_dict_recognized['input_ids'])        
-        
-        if args.pretrained_model != 'roberta':
-            labelled_segs.append(input_dict_labelled['token_type_ids'])
-            recognized_segs.append(input_dict_recognized['token_type_ids'])
-                                
-        output_labels.append(label_map[intent_labels[i]])
-            
     if args.pretrained_model != 'roberta':
         input_tensor_labelled = torch.stack(labelled_inputs, dim=0)    
         seg_tensor_labelled = torch.stack(labelled_segs, dim=0)
@@ -411,7 +244,7 @@ print('labelled_valid {} recognized_valid {} valid_label {}'.format(len(labelled
 print('labelled_test {} recognized_test {} test_label {}'.format(len(labelled_test), len(recognized_test), len(test_label)))
 
 ## labelled dataset
-train_set = TensorDataset(labelled_train, train_label)
+train_set = TensorDataset(recognized_train, train_label)
 train_dataloader = DataLoader(train_set, shuffle=True, batch_size=args.batch_size)
 
 test_labelled = TensorDataset(labelled_test, test_label)
@@ -422,26 +255,26 @@ test_recognized_dataloader = DataLoader(test_recognized, sampler=None, batch_siz
 
 ### model
 if args.pretrained_model == 'bert':
-    llm = AutoModelForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(label_names)).cuda()
-    #rlm = AutoModelForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(label_names)).cuda()
+    #llm = AutoModelForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(label_names)).cuda()
+    rlm = AutoModelForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(label_names)).cuda()
 elif args.pretrained_model == 'albert':
-    llm = AutoModelForSequenceClassification.from_pretrained('albert-base-v2', num_labels=len(label_names)).cuda()
-    #rlm = AutoModelForSequenceClassification.from_pretrained('albert-base-v2', num_labels=len(label_names)).cuda()
+    #llm = AutoModelForSequenceClassification.from_pretrained('albert-base-v2', num_labels=len(label_names)).cuda()
+    rlm = AutoModelForSequenceClassification.from_pretrained('albert-base-v2', num_labels=len(label_names)).cuda()
 elif args.pretrained_model == 'xlnet':
-    llm = AutoModelForSequenceClassification.from_pretrained('xlnet-base-cased', num_labels=len(label_names)).cuda()
-    #rlm = AutoModelForSequenceClassification.from_pretrained('xlnet-base-cased', num_labels=len(label_names)).cuda()
+    #llm = AutoModelForSequenceClassification.from_pretrained('xlnet-base-cased', num_labels=len(label_names)).cuda()
+    rlm = AutoModelForSequenceClassification.from_pretrained('xlnet-base-cased', num_labels=len(label_names)).cuda()
 elif args.pretrained_model == 'electra':
-    llm = AutoModelForSequenceClassification.from_pretrained('google/electra-small-discriminator', num_labels=len(label_names)).cuda()
-    #rlm = AutoModelForSequenceClassification.from_pretrained('google/electra-small-discriminator', num_labels=len(label_names)).cuda()
+    #llm = AutoModelForSequenceClassification.from_pretrained('google/electra-small-discriminator', num_labels=len(label_names)).cuda()
+    rlm = AutoModelForSequenceClassification.from_pretrained('google/electra-small-discriminator', num_labels=len(label_names)).cuda()
 elif args.pretrained_model == 'roberta':
-    llm = AutoModelForSequenceClassification.from_pretrained('roberta-base', num_labels=len(label_names)).cuda()
-    #rlm = AutoModelForSequenceClassification.from_pretrained('roberta-base', num_labels=len(label_names)).cuda()
+    #llm = AutoModelForSequenceClassification.from_pretrained('roberta-base', num_labels=len(label_names)).cuda()
+    rlm = AutoModelForSequenceClassification.from_pretrained('roberta-base', num_labels=len(label_names)).cuda()
 else:
     print('no enable model')
 
 num_label = len(label_names)
 print('number of label', num_label)
-model_params = list(llm.parameters())
+model_params = list(rlm.parameters())
 
 if args.optim == 'adamw':
     optimizer = AdamW(model_params, lr = args.lr,  eps = 1e-8)
@@ -461,17 +294,12 @@ def flat_accuracy(preds, labels):
 
     return np.sum(pred_flat == labels_flat) / len(labels_flat)
 
-
-model_record_dir = './S_trained_analysis_mixup/ckpt{}/'.format(args.ckpt)
+model_record_dir = './S_hat_trained_analysis/ckpt{}/'.format(args.ckpt)
 if not os.path.exists(model_record_dir):
     os.makedirs(model_record_dir)
-#recognized_valid_acc =[]
 recognized_test_acc_list =[]
 recognized_test_acc_list =[]
 all_epochs = []
-use_cuda = torch.cuda.is_available()
-
-criterion = nn.CrossEntropyLoss(ignore_index=0)
 
 for epoch_i in range(0, args.epochs):
     save_epoch = epoch_i+1
@@ -486,52 +314,63 @@ for epoch_i in range(0, args.epochs):
         
     total_loss = 0.0
     
-    c_correct = 0
-    a_correct = 0
+    #llm.train()
+    rlm.train()    
     
-    llm.train()
-    
-    for step, (labelled, labels) in enumerate(train_dataloader):
+    for step, (recognized, labels) in enumerate(train_dataloader):
         optimizer.zero_grad()
         if step % 100 == 0 and not step == 0:
             print('  Batch {:>5,}  of  {:>5,}.'.format(step, len(train_dataloader)))
         
+        '''
         labelled_src = labelled[:, 0, :]
         if args.pretrained_model != 'roberta':
             labelled_segs = labelled[:, 1, :]
         labelled_mask = labelled[:, -1, :]
+        '''
         
         
+        recognized_src = recognized[:, 0, :]
+        if args.pretrained_model != 'roberta':
+            recognized_segs = recognized[:, 1, :]
+        recognized_mask = recognized[:, -1, :]
+        
+        '''
         labelled_src = labelled_src.cuda()
         if args.pretrained_model != 'roberta':
             labelled_segs = labelled_segs.cuda()
-        labelled_mask = labelled_mask.cuda()
+        labelled_mask = labelled_mask.cuda()        
+        '''
         
+        recognized_src = recognized_src.cuda()
+        if args.pretrained_model != 'roberta':
+            recognized_segs = recognized_segs.cuda()
+        recognized_mask = recognized_mask.cuda()
+        
+                
         labels = labels.cuda()
         
-        
-        inputs, targets_a, targets_b, lam = mixup_data(labelled_src, labels, args.alpha, use_cuda)
-        inputs, targets_a, targets_b = map(Variable, (inputs, targets_a, targets_b))
         if args.pretrained_model != 'roberta':
-            llm_outputs = llm(inputs, token_type_ids=labelled_segs, attention_mask=labelled_mask)
+            #llm_outputs = llm(labelled_src, token_type_ids=labelled_segs, attention_mask=labelled_mask, labels=labels)
+            rlm_outputs = rlm(recognized_src, token_type_ids=recognized_segs, attention_mask=recognized_mask, labels=labels)
         else:
-            llm_outputs = llm(inputs, token_type_ids=None, attention_mask=labelled_mask)
+            #llm_outputs = llm(labelled_src, token_type_ids=None, attention_mask=labelled_mask, labels=labels)
+            rlm_outputs = rlm(recognized_src, token_type_ids=None, attention_mask=recognized_mask, labels=labels)
         
-        logits = llm_outputs.logits        
-        input_logit = logits.contiguous().view(-1, logits.size(-1))
-                        
-        targets_a = targets_a.view(-1)
-        targets_b = targets_b.view(-1)
+        #llm_loss = llm_outputs[0]
+        #rlm_loss = rlm_outputs[0]
+        loss = rlm_outputs[0]
+        #loss = (llm_loss * args.w1) + (rlm_loss * args.w2)
         
-        loss = mixup_criterion(criterion, input_logit, targets_a, targets_b, lam)
-                
-        total_loss += loss.data
-                
+        #sum_loss_val = (llm_loss.item() * args.w1 + rlm_loss.item() * args.w2)
+        
+        total_loss += loss
         loss.backward()                
         torch.nn.utils.clip_grad_norm_(model_params, 1.0)
         
         optimizer.step()
-        scheduler.step()
+        scheduler.step() 
+        
                 
     avg_train_loss = total_loss / len(train_dataloader)
 
@@ -545,7 +384,8 @@ for epoch_i in range(0, args.epochs):
     #               Evaluation (labelled)
     # ========================================
 
-    llm.eval()
+    ## clean test 
+    rlm.eval()
     labelled_test_accuracy = 0
     labelled_targets_list = []
     labelled_preds_list = []
@@ -566,9 +406,9 @@ for epoch_i in range(0, args.epochs):
             labels = labels.cuda()
     
             if args.pretrained_model != 'roberta':
-                outputs = llm(src, token_type_ids=segs, attention_mask=mask)
+                outputs = rlm(src, token_type_ids=segs, attention_mask=mask)
             else:
-                outputs = llm(src, token_type_ids=None, attention_mask=mask)
+                outputs = rlm(src, token_type_ids=None, attention_mask=mask)
             
             targets = labels.detach().cpu().numpy()            
             preds = np.argmax(outputs.logits.detach().cpu().numpy(), axis = 1)
@@ -594,13 +434,13 @@ for epoch_i in range(0, args.epochs):
     plt.figure(figsize=(12,10))
     
     if args.dataset_name == 'all':
-        plot_confusion_matrix(labelled_cmt.numpy(), label_names, title=r'Confusion Matrix of $S \rightarrow S$ (All of Speakers in {} Dataset)'.format(args.dataset_name2))
+        plot_confusion_matrix(labelled_cmt.numpy(), label_names, title=r'Confusion Matrix of $\hat S \rightarrow S$ (All of Speakers in {} Dataset)'.format(args.dataset_name2))
         plt.savefig(os.path.join(model_record_dir, 'epoch={},proposed->S,speaker=all'.format(save_epoch)))
     elif args.dataset_name is not None:
-        plot_confusion_matrix(labelled_cmt.numpy(), label_names, title=r'Confusion Matrix of $S \rightarrow S$ ({} in {} Dataset)'.format(args.dataset_name, args.dataset_name2))
+        plot_confusion_matrix(labelled_cmt.numpy(), label_names, title=r'Confusion Matrix of $\hat S \rightarrow S$ ({} in {} Dataset)'.format(args.dataset_name, args.dataset_name2))
         plt.savefig(os.path.join(model_record_dir, 'epoch={},proposed->S,speaker={}'.format(save_epoch, args.dataset_name)))   
     else:
-        plot_confusion_matrix(labelled_cmt.numpy(), label_names, title=r'Confusion Matrix of $S \rightarrow S$ (FSC Dataset)')
+        plot_confusion_matrix(labelled_cmt.numpy(), label_names, title=r'Confusion Matrix of $\hat S \rightarrow S$ (FSC Dataset)')
         plt.savefig(os.path.join(model_record_dir, 'epoch={},proposed->S,FSC'.format(save_epoch)))
     
     #num_label
@@ -609,7 +449,7 @@ for epoch_i in range(0, args.epochs):
     #               Evaluation (recognized)
     # ========================================
     ## recognized test 
-    llm.eval()
+    rlm.eval()
     recognized_test_accuracy = 0
     recognized_targets_list = []
     recognized_preds_list = []
@@ -630,9 +470,9 @@ for epoch_i in range(0, args.epochs):
             labels = labels.cuda()
     
             if args.pretrained_model != 'roberta':
-                outputs = llm(src, token_type_ids=segs, attention_mask=mask)
+                outputs = rlm(src, token_type_ids=segs, attention_mask=mask)
             else:
-                outputs = llm(src, token_type_ids=None, attention_mask=mask)
+                outputs = rlm(src, token_type_ids=None, attention_mask=mask)
             
             targets = labels.detach().cpu().numpy()
             preds = np.argmax(outputs.logits.detach().cpu().numpy(), axis = 1)
@@ -658,17 +498,16 @@ for epoch_i in range(0, args.epochs):
     plt.figure(figsize=(12,10))
     
     if args.dataset_name == 'all':
-        plot_confusion_matrix(recognized_cmt.numpy(), label_names, title=r'Confusion Matrix of $S \rightarrow \hat{S}$'+' (All of Speakers in {} Dataset)'.format(args.dataset_name2))
+        plot_confusion_matrix(recognized_cmt.numpy(), label_names, title=r'Confusion Matrix of $\hat S \rightarrow \hat S$'+' (All of Speakers in {} Dataset)'.format(args.dataset_name2))
         plt.savefig(os.path.join(model_record_dir, 'epoch={},proposed->S_hat,speaker=all'.format(save_epoch)))
     elif args.dataset_name is not None:
-        plot_confusion_matrix(recognized_cmt.numpy(), label_names, title=r'Confusion Matrix of $S \rightarrow \hat{S}$'+' ({} in {} Dataset)'.format(args.dataset_name, args.dataset_name2))
+        plot_confusion_matrix(recognized_cmt.numpy(), label_names, title=r'Confusion Matrix of $\hat S \rightarrow \hat S$'+' ({} in {} Dataset)'.format(args.dataset_name, args.dataset_name2))
         plt.savefig(os.path.join(model_record_dir, 'epoch={},proposed->S_hat,speaker={}'.format(save_epoch, args.dataset_name)))   
     else:
-        plot_confusion_matrix(recognized_cmt.numpy(), label_names, title=r'Confusion Matrix of $S \rightarrow \hat{S}$'+' (FSC Dataset)')
+        plot_confusion_matrix(recognized_cmt.numpy(), label_names, title=r'Confusion Matrix of $\hat S \rightarrow \hat S$'+' (FSC Dataset)')
         plt.savefig(os.path.join(model_record_dir, 'epoch={},proposed->S_hat,FSC'.format(save_epoch)))
-    
-    
-    with open(os.path.join(model_record_dir, 's_to_hat_test_result_{}.csv'.format(save_epoch)), 'w') as ff:
+
+    with open(os.path.join(model_record_dir, 'shat_to_hat_test_result_{}.csv'.format(save_epoch)), 'w') as ff:
         for i in range(len(recognized_test)):
             if label_names[recognized_targets_list[i]] != label_names[recognized_preds_list[i]]:
                 for_write = '{}th labelled_sentences {} recognized_sentences {} label {} predict {}'.format(i, labelled_sentences[i], recognized_sentences[i], label_names[recognized_targets_list[i]], label_names[recognized_preds_list[i]]) 
