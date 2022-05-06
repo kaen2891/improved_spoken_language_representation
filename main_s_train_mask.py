@@ -4,7 +4,6 @@ from transformers import AdamW, BertConfig, BertModel
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from transformers import get_linear_schedule_with_warmup
 import torch.backends.cudnn as cudnn
-#import tensorflow as tf
 import warnings
 from glob import glob
 
@@ -320,11 +319,6 @@ else:
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-#from transformers import BertForSequenceClassification, BertTokenizer # BERT
-#from transformers import AlbertForSequenceClassification, AlbertTokenizer # ALBERT
-#from transformers import XLNetForSequenceClassification, XLNetTokenizer # XL-NET
-#from transformers import ElectraForSequenceClassification, ElectraTokenizer #ELECTRA
-#from transformers import RobertaForSequenceClassification, RobertaTokenizer #ROBERTa
 
 if args.pretrained_model == 'bert':
     tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
@@ -341,16 +335,19 @@ else:
 
 print('selective tokenizer is', tokenizer)    
 
-
 if args.dataset_name == 'FSC_dataset':
-    labelled_train, recognized_train, train_label, label_names, _, _ = preprocess_data_mask(tokenizer, train_dataset, None, None) 
+    labelled_train, recognized_train, train_label, label_names, _, _ = preprocess_data(tokenizer, train_dataset, None, None) 
     labelled_valid, recognized_valid, valid_label, _, _, _ = preprocess_data(tokenizer, valid_dataset, None, None)
     labelled_test, recognized_test, test_label, _, labelled_sentences, recognized_sentences = preprocess_data(tokenizer, test_dataset, None, None)
+    args.w1 = 0.55
+    args.w2 = 0.45
 else:
-    labelled_train, recognized_train, train_label, label_names, _, _ = preprocess_data_mask(tokenizer, train_dataset, 'train', args.dataset_name.lower()) 
+    labelled_train, recognized_train, train_label, label_names, _, _ = preprocess_data(tokenizer, train_dataset, 'train', args.dataset_name.lower()) 
     labelled_valid, recognized_valid, valid_label, _, _, _ = preprocess_data(tokenizer, valid_dataset, 'valid', args.dataset_name.lower())
     labelled_test, recognized_test, test_label, _, labelled_sentences, recognized_sentences = preprocess_data(tokenizer, test_dataset, 'test', args.dataset_name.lower())
-
+    args.w1 = 0.85 
+    args.w2 = 0.15
+    
 print('dataset_name {} labelled_train {} recognized_train {} train_label {}'.format(args.dataset_name, len(labelled_train), len(recognized_train), len(train_label)))
 print('labelled_train {} recognized_train {} train_label {}'.format(len(labelled_train), len(recognized_train), len(train_label)))
 print('labelled_valid {} recognized_valid {} valid_label {}'.format(len(labelled_valid), len(recognized_valid), len(valid_label)))
@@ -460,15 +457,8 @@ for epoch_i in range(0, args.epochs):
             llm_outputs = llm(labelled_src, token_type_ids=labelled_segs, attention_mask=labelled_mask, labels=labels)
         else:
             llm_outputs = llm(labelled_src, token_type_ids=None, attention_mask=labelled_mask, labels=labels)
-            #rlm_outputs = rlm(recognized_src, token_type_ids=None, attention_mask=recognized_mask, labels=labels)
         
-        #llm_loss = llm_outputs[0]
-        #rlm_loss = rlm_outputs[0]
         loss = llm_outputs[0]
-        #loss = (llm_loss * args.w1) + (rlm_loss * args.w2)
-        
-        #sum_loss_val = (llm_loss.item() * args.w1 + rlm_loss.item() * args.w2)
-        
         total_loss += loss
         loss.backward()                
         torch.nn.utils.clip_grad_norm_(model_params, 1.0)
