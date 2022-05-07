@@ -36,7 +36,7 @@
 ## Dataset
 ### In the dataset folder, we provide the labeled dataset (oracle) and the corresponding recognized dataset from wav2vec 2.0 model. Please check the respective train/valid/test CSV files.
 
-## Bug / Reporting
+## Bug / Troubleshooting
 ### If any problem happens, do not hesitate to open the issue or give me the email (kaen2891@gmail.com)
 
 ## Citation
