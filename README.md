@@ -31,4 +31,19 @@
 ## Bug / Reporting
 ### If any problem happens, do not hesitate to open the issue or give me the email (kaen2891@gmail.com)
 
- 
+## Citation
+```
+@Article{s22041509,
+AUTHOR = {Kim, June-Woo and Yoon, Hyekyung and Jung, Ho-Young},
+TITLE = {Improved Spoken Language Representation for Intent Understanding in a Task-Oriented Dialogue System},
+JOURNAL = {Sensors},
+VOLUME = {22},
+YEAR = {2022},
+NUMBER = {4},
+ARTICLE-NUMBER = {1509},
+URL = {https://www.mdpi.com/1424-8220/22/4/1509},
+PubMedID = {35214405},
+ISSN = {1424-8220},
+DOI = {10.3390/s22041509}
+}
+```
